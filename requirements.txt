@@ -1,3 +1,5 @@
 motor
+pymongo[srv]
 aiogram
 aiohttp
+
