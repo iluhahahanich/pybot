@@ -108,7 +108,7 @@ async def echo(message: types.Message):
 
 
 if __name__ == '__main__':
-    client = AsyncIOMotorClient('localhost', 27017)
+    client = AsyncIOMotorClient()
     db = client.botdb
 
     executor.start_polling(dp)
