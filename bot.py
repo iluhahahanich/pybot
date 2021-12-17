@@ -17,6 +17,10 @@ client: AsyncIOMotorClient
 db: motor.motor_asyncio.AsyncIOMotorDatabase
 
 
+class MyError(RuntimeError):
+    pass
+
+
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     await message.answer("Hi!\nI'm cinema bot!\nMade by iluhahahanich.")
@@ -28,7 +32,8 @@ async def cmd_start(message: types.Message):
 
 @dp.message_handler(commands=['help'])
 async def cmd_help(message: types.Message):
-    await message.answer("I can only do things from task")
+    await message.answer("/stats - show advised film counts for user\n"
+                         "/history - show user's history\n")
 
 
 def _format_hist(hist: list[tuple[datetime.datetime, str]]):
@@ -55,12 +60,49 @@ async def cmd_stats(message: types.Message):
     await message.answer(_format_stats(stats))
 
 
-def create_film_description(json: dict[str, tp.Any]):
+def create_film_description(json: dict[str, tp.Any], link: str):
     return f"*{json['fullTitle']}*\n" \
            f"Рейтинг: _{json['imDbRating']}_\n" \
            f"Длительность: _{json['runtimeStr']}_\n" \
            f"Описание: _{json['plotLocal']}_\n" \
-           f"Смореть: https://www.imdb.com/title/{json['id']}"
+           f"Смореть: {link}"
+
+
+async def get_first_link(query: str, session: aiohttp.ClientSession):
+    url = 'https://www.googleapis.com/customsearch/v1'
+    params = {
+        'key': os.environ['SE_KEY'],
+        'cx': os.environ['SE_ID'],
+        'q': query,
+        'num': 1,
+    }
+    async with session.get(url=url, params=params) as resp:
+        res = await resp.json()
+        return res['items'][0]['link'] if 'items' in res else ''
+
+
+async def search_title(text: str, session: aiohttp.ClientSession):
+    async with session.get(f"https://imdb-api.com/ru/API/"
+                           f"Search/{os.environ['IMDB_KEY']}/{text}") as search:
+        if not search.ok:
+            raise MyError("Something vent wrong")
+
+        search_res = (await search.json())['results']
+
+        if not search_res:
+            raise MyError("Couldn't find :(")
+
+        return search_res[0]
+
+
+async def search_film_data(title: str, session: aiohttp.ClientSession):
+    async with session.get(f"https://imdb-api.com/ru/API/"
+                           f"Title/{os.environ['IMDB_KEY']}/"
+                           f"{title}") as resp:
+        if not resp.ok:
+            raise MyError("Something vent wrong")
+
+        return await resp.json()
 
 
 @dp.message_handler()
@@ -68,43 +110,21 @@ async def echo(message: types.Message):
     await db.users.update_one({'_id': message['from']['id']},
                               {'$push': {'history': [datetime.datetime.now(), message.text]}},
                               upsert=True)
-    await message.answer('updated')
-    req_res = message.text
-    # async with aiohttp.ClientSession() as session:
-    #     # print(message)
-    #     async with session.get(f"https://imdb-api.com/ru/API/"
-    #                            f"Search/{os.environ['IMDB_KEY']}/{message['text']}") as search:
-    #         if search.ok:
-    #             json = await search.json()
-    #             # print(json)
-    #             search_res = json['results']
-    ##             search_res = (await search.json())['results']
 
-    #
-    #             if not search_res:
-    #                 await message.answer("Couldn't find")
-    #                 return
-    #
-    #             title_id = search_res[0]['id']
-    #
-    #             async with session.get(f"https://imdb-api.com/ru/API/"
-    #                                    f"Title/{os.environ['IMDB_KEY']}/{title_id}") as resp:
-    #
-    #                 if resp.ok:
-    #                     json = await resp.json()
-    #                     # print(json)
-    #                     await message.answer_photo(
-    #                         json['image'], caption=create_film_description(json), parse_mode='Markdown')
-    #
-    #                     # db.upadate_one({'_id': message['from']['id']}, {'$inc': {json['fullTitle']: 1}})
-    #
-    #                 else:
-    #                     await message.answer("Something vent wrong")
-    #         else:
-    #             await message.answer("Something vent wrong")
-    db.users.update_one({'_id': message['from']['id']},
-                        {'$inc': {'stats.' + req_res: 1}},
-                        upsert=True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            title = await search_title(message['text'], session)
+            link = await get_first_link(title['title'] + (title.get('description', ' ') or ''), session)
+            json = await search_film_data(title['id'], session)
+
+            await message.answer_photo(json['image'],
+                                       caption=create_film_description(json, link), parse_mode='Markdown')
+
+            db.users.update_one({'_id': message['from']['id']},
+                                {'$inc': {'stats.' + json['fullTitle']: 1}},
+                                upsert=True)
+    except MyError as err:
+        await message.answer(str(err))
 
 
 if __name__ == '__main__':
@@ -112,7 +132,4 @@ if __name__ == '__main__':
     db = client.botdb
 
     executor.start_polling(dp)
-
-
-# {"message_id": 130, "from": {"id": 831442399, "is_bot": false, "first_name": "Илья", "last_name": "Угрин", "username": "iluhahahanich", "language_code": "en"}, "chat": {"id": 831442399, "first_name": "Илья", "last_name": "Угрин", "username": "iluhahahanich", "type": "private"}, "date": 1639684763, "text": "io"}
 
