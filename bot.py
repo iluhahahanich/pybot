@@ -1,12 +1,12 @@
 import os
 import typing as tp
+import datetime
 
-import motor.motor_asyncio
 from aiogram import Bot, types
 from aiogram.dispatcher import Dispatcher
 from aiogram.utils import executor
 import aiohttp
-import datetime
+import motor.motor_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
@@ -108,10 +108,11 @@ async def echo(message: types.Message):
 
 
 if __name__ == '__main__':
-    client = AsyncIOMotorClient()
+    client = AsyncIOMotorClient(os.environ['MONGO_KEY'])
     db = client.botdb
 
     executor.start_polling(dp)
 
 
 # {"message_id": 130, "from": {"id": 831442399, "is_bot": false, "first_name": "Илья", "last_name": "Угрин", "username": "iluhahahanich", "language_code": "en"}, "chat": {"id": 831442399, "first_name": "Илья", "last_name": "Угрин", "username": "iluhahahanich", "type": "private"}, "date": 1639684763, "text": "io"}
+
