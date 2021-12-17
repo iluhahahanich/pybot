@@ -5,10 +5,10 @@ import datetime
 from aiogram import Bot, types
 from aiogram.dispatcher import Dispatcher
 from aiogram.utils import executor
+from aiogram.utils.exceptions import WrongFileIdentifier
 import aiohttp
 import motor.motor_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
-
 
 bot = Bot(token=os.environ['BOT_TOKEN'])
 dp = Dispatcher(bot)
@@ -23,11 +23,11 @@ class MyError(RuntimeError):
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    await message.answer("Hi!\nI'm cinema bot!\nMade by iluhahahanich.")
     await db.users.update_one(
         {'_id': message['from']['id']},
         {'$setOnInsert': {'history': [], 'stats': {}}},
         upsert=True)
+    await message.answer("Hi!\nI'm cinema bot!\nMade by iluhahahanich.")
 
 
 @dp.message_handler(commands=['help'])
@@ -60,14 +60,6 @@ async def cmd_stats(message: types.Message):
     await message.answer(_format_stats(stats))
 
 
-def create_film_description(json: dict[str, tp.Any], link: str):
-    return f"*{json['fullTitle']}*\n" \
-           f"Рейтинг: _{json['imDbRating']}_\n" \
-           f"Длительность: _{json['runtimeStr']}_\n" \
-           f"Описание: _{json['plotLocal']}_\n" \
-           f"Смореть: {link}"
-
-
 async def get_first_link(query: str, session: aiohttp.ClientSession):
     url = 'https://www.googleapis.com/customsearch/v1'
     params = {
@@ -88,7 +80,6 @@ async def search_title(text: str, session: aiohttp.ClientSession):
             raise MyError("Something vent wrong")
 
         search_res = (await search.json())['results']
-
         if not search_res:
             raise MyError("Couldn't find :(")
 
@@ -105,6 +96,26 @@ async def search_film_data(title: str, session: aiohttp.ClientSession):
         return await resp.json()
 
 
+def _create_film_description(json: dict[str, tp.Any]):
+    return f"*{json['fullTitle']}*\n" \
+           f"Рейтинг: _{json['imDbRating']}_\n" \
+           f"Длительность: _{json['runtimeStr']}_\n" \
+           f"Описание: _{json['plotLocal']}_\n"
+
+
+NO_IMAGE = 'https://www.flaticon.com/premium-icon/no-pictures_3875433'
+
+
+async def _write_response(
+        message: types.Message,
+        json: dict[str, tp.Any],
+        link: str,
+        image: str = NO_IMAGE,
+):
+    await message.answer_photo(image, caption=_create_film_description(json), parse_mode='Markdown')
+    await message.answer('Ссылка: \n' + link, disable_web_page_preview=True)
+
+
 @dp.message_handler()
 async def echo(message: types.Message):
     await db.users.update_one({'_id': message['from']['id']},
@@ -114,17 +125,21 @@ async def echo(message: types.Message):
     try:
         async with aiohttp.ClientSession() as session:
             title = await search_title(message['text'], session)
-            link = await get_first_link(title['title'] + (title.get('description', ' ') or ''), session)
+            link = await get_first_link(title['title'], session)
             json = await search_film_data(title['id'], session)
 
-            await message.answer_photo(json['image'],
-                                       caption=create_film_description(json, link), parse_mode='Markdown')
+            await db.users.update_one({'_id': message['from']['id']},
+                                      {'$inc': {'stats.' + json['title']: 1}},
+                                      upsert=True)
 
-            db.users.update_one({'_id': message['from']['id']},
-                                {'$inc': {'stats.' + json['fullTitle']: 1}},
-                                upsert=True)
+            await _write_response(message, json, link, json['image'])
+
     except MyError as err:
         await message.answer(str(err))
+    except WrongFileIdentifier:
+        await _write_response(message, json, link)
+    except RuntimeError:
+        await message.answer('Something vent wrong')
 
 
 if __name__ == '__main__':
