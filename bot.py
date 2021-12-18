@@ -74,33 +74,23 @@ async def get_first_link(query: str, session: aiohttp.ClientSession):
 
 
 async def search_title(text: str, session: aiohttp.ClientSession):
-    async with session.get(f"https://imdb-api.com/ru/API/"
-                           f"Search/{os.environ['IMDB_KEY']}/{text}") as search:
+    async with session.get(f"https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?"
+                           f"keyword={text}&page=1") as search:
         if not search.ok:
             raise MyError("Something vent wrong")
 
-        search_res = (await search.json())['results']
+        search_res = (await search.json())['films']
         if not search_res:
             raise MyError("Couldn't find :(")
 
         return search_res[0]
 
 
-async def search_film_data(title: str, session: aiohttp.ClientSession):
-    async with session.get(f"https://imdb-api.com/ru/API/"
-                           f"Title/{os.environ['IMDB_KEY']}/"
-                           f"{title}") as resp:
-        if not resp.ok:
-            raise MyError("Something vent wrong")
-
-        return await resp.json()
-
-
 def _create_film_description(json: dict[str, tp.Any]):
-    return f"*{json['fullTitle']}*\n" \
-           f"Рейтинг: _{json['imDbRating']}_\n" \
-           f"Длительность: _{json['runtimeStr']}_\n" \
-           f"Описание: _{json['plotLocal']}_\n"
+    return f"*{json['nameRu']}*\n" \
+           f"Рейтинг: _{json['rating']}_\n" \
+           f"Длительность: _{json['filmLength']}_\n" \
+           f"Описание: _{json['description']}_\n"
 
 
 NO_IMAGE = 'https://www.flaticon.com/premium-icon/no-pictures_3875433'
@@ -123,16 +113,15 @@ async def echo(message: types.Message):
                               upsert=True)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            title = await search_title(message['text'], session)
-            link = await get_first_link(title['title'], session)
-            json = await search_film_data(title['id'], session)
+        async with aiohttp.ClientSession(headers={'X-API-KEY': os.environ['X-API-KEY']}) as session:
+            json = await search_title(message['text'], session)
+            link = await get_first_link(json['nameRu'], session)
 
             await db.users.update_one({'_id': message['from']['id']},
-                                      {'$inc': {'stats.' + json['title']: 1}},
+                                      {'$inc': {'stats.' + json['nameRu']: 1}},
                                       upsert=True)
 
-            await _write_response(message, json, link, json['image'])
+            await _write_response(message, json, link, json['posterUrl'])
 
     except MyError as err:
         await message.answer(str(err))
